@@ -8,17 +8,99 @@ Bronze (ข้อมูลดิบ) → Silver (แปลงชนิด/ทำ
 
 ---
 
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    %% Sources
+    S3["☁️ S3 / IoT Ingestion<br/>(27M+ events)"]
+
+    %% Bronze
+    subgraph BRONZE["🟤 BRONZE Schema"]
+        RAW["RAW_EVENTS<br/>━━━━━━━━━━━━━<br/>EVENT_TS, PAYLOAD (VARCHAR),<br/>SOURCE, SCHEMA_VERSION,<br/>NAMESPACE, ASSET, WORK_CENTER"]
+        STREAM["RAW_EVENTS_STREAM<br/>(APPEND_ONLY)"]
+    end
+
+    %% Silver
+    subgraph SILVER["⚪ SILVER Schema"]
+        direction LR
+        PROD_S["PRODUCTION_EVENTS<br/>━━━━━━━━━━━━━<br/>EVENT_ID, STATE_CODE,<br/>IS_PRODUCING, DOWNTIME_CATEGORY,<br/>SOURCE_PERIOD_SEC, COUNTER"]
+        VIB_S["VIBRATION_EVENTS<br/>━━━━━━━━━━━━━<br/>EVENT_ID, MOTOR_ID,<br/>X_RMS_VELOCITY, ISO_ZONE,<br/>IS_VALID_READING, SCHEMA_VER"]
+        PWR_S["POWER_METER_EVENTS<br/>━━━━━━━━━━━━━<br/>EVENT_ID, DEVICE_ID,<br/>CUMULATIVE_KWH, POWER_FACTOR,<br/>IS_DUPLICATE_METER"]
+    end
+
+    %% Gold
+    subgraph GOLD["🟡 GOLD Schema"]
+        direction LR
+        PROD_G["PRODUCTION_DAILY<br/>━━━━━━━━━━━━━<br/>UPTIME_PCT (weighted),<br/>ALWAYS_RUNNING_FLAG,<br/>DOWNTIME breakdown"]
+        VIB_G["VIBRATION_DAILY<br/>━━━━━━━━━━━━━<br/>ISO_ZONE_DAILY,<br/>X_RMS_AVG/MAX,<br/>TEMPERATURE trends"]
+        PWR_G["ENERGY_DAILY<br/>━━━━━━━━━━━━━<br/>KWH_CONSUMED (delta),<br/>PF_AVG, ESTIMATED_COST_THB,<br/>PEAK/OFF-PEAK split"]
+    end
+
+    %% Reference
+    subgraph REF["📋 Reference Tables"]
+        direction LR
+        R1["REF_SHIFT"]
+        R2["REF_ISO_THRESHOLDS"]
+        R3["REF_TOU_RATES"]
+    end
+
+    %% Dashboard
+    DASH["📊 Streamlit Dashboard<br/>(plant-health-dashboard)"]
+
+    %% Flows
+    S3 -->|"COPY INTO"| RAW
+    RAW --> STREAM
+    STREAM -->|"Task: LOAD_SILVER_PRODUCTION<br/>WHERE SOURCE='redlion_cr3000'"| PROD_S
+    STREAM -->|"Task: LOAD_SILVER_VIBRATION<br/>WHERE SCHEMA_VERSION LIKE 'vibration.raw.%'"| VIB_S
+    STREAM -->|"Task: LOAD_SILVER_POWER_METER<br/>WHERE SCHEMA_VERSION LIKE 'power_meter.raw.%'"| PWR_S
+    PROD_S -->|"Task: REFRESH_GOLD_DAILY<br/>(MERGE, 15-min)"| PROD_G
+    VIB_S -->|"MERGE"| VIB_G
+    PWR_S -->|"LAG() delta + MERGE"| PWR_G
+    REF -.->|"join"| GOLD
+    GOLD --> DASH
+```
+
+### Task DAG (Scheduling)
+
+```mermaid
+graph LR
+    ROOT["LOAD_SILVER_ROOT<br/>⏱ SCHEDULE='5 MINUTE'<br/>WHEN stream_has_data"]
+    ROOT --> P["LOAD_SILVER_PRODUCTION"]
+    ROOT --> V["LOAD_SILVER_VIBRATION"]
+    ROOT --> M["LOAD_SILVER_POWER_METER"]
+    G["REFRESH_GOLD_DAILY<br/>⏱ SCHEDULE='15 MINUTE'"]
+```
+
+---
+
 ## การออกแบบแต่ละ Layer
 
 ### Bronze
 
+| Column | Type | Notes |
+|--------|------|-------|
+| EVENT_TS | TIMESTAMP_NTZ | UTC from source |
+| PAYLOAD | VARCHAR | Raw JSON string (not VARIANT — cast at Silver) |
+| SOURCE | VARCHAR | `redlion_cr3000` or `aws_iot_core` |
+| SCHEMA_VERSION | VARCHAR | `0.1`, `vibration.raw.v1`, `vibration.raw.v2`, `power_meter.raw.v1` |
+| NAMESPACE | VARCHAR | Domain routing: `Machine Monitoring`, `compomax/...` |
+| ASSET | VARCHAR | Device identifier |
+| WORK_CENTER | VARCHAR | Production group (G1, G2, G3, G4) |
+
 - ตารางเดียว `RAW_EVENTS` — ไม่เปลี่ยนแปลงจากต้นทาง
-- Timestamp ทั้งหมดเก็บเป็น UTC, PAYLOAD เก็บเป็น VARIANT
+- Timestamp ทั้งหมดเก็บเป็น UTC
 - ไม่มี transformation ใดๆ ที่ layer นี้
 
 ### Silver
 
-หนึ่งตารางต่อหนึ่งโดเมน การตัดสินใจสำคัญ:
+หนึ่งตารางต่อหนึ่งโดเมน:
+
+| Table | Key Columns | Grain |
+|-------|------------|-------|
+| `PRODUCTION_EVENTS` | EVENT_ID, WORK_CENTER, STATE_CODE, IS_PRODUCING, DOWNTIME_CATEGORY, SOURCE_PERIOD_SEC, COUNTER | work_center × 3s reading |
+| `VIBRATION_EVENTS` | EVENT_ID, MOTOR_ID, X_RMS_VELOCITY, Z_RMS_VELOCITY, ISO_ZONE, IS_VALID_READING, SCHEMA_VER | motor × reading interval |
+| `POWER_METER_EVENTS` | EVENT_ID, DEVICE_ID, CUMULATIVE_KWH, POWER_FACTOR, IS_DUPLICATE_METER, FLOOR | device × ~1min |
 
 **ทำไมไม่รวมเป็นตารางเดียว?**
 แต่ละโดเมนมีโครงสร้าง payload และ query pattern ที่แตกต่างกันโดยสิ้นเชิง
