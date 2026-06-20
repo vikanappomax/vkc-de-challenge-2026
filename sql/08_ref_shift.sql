@@ -21,10 +21,10 @@ COMMENT = 'Reference: shift schedule boundaries — Chonburi plant 4-shift rotat
 
 INSERT INTO REF_SHIFT (SHIFT_NAME, START_TIME, END_TIME, SHIFT_ORDER, DESCRIPTION)
 VALUES
-    ('Night',    '22:45:00', '00:45:00', 1, 'Night shift — 22:45 to 00:45 (crosses midnight)'),
-    ('Morning',  '00:45:00', '06:45:00', 2, 'Morning shift — 00:45 to 06:45'),
-    ('Day',      '06:45:00', '14:45:00', 3, 'Day shift — 06:45 to 14:45'),
-    ('Evening',  '14:45:00', '22:45:00', 4, 'Evening shift — 14:45 to 22:45');
+    ('Night',    '21:45:00', '00:45:00', 1, 'Night shift — 21:45 to 00:45 (crosses midnight)'),
+    ('Morning',  '00:45:00', '09:45:00', 2, 'Morning shift — 00:45 to 09:45'),
+    ('Day',      '09:45:00', '12:45:00', 3, 'Day shift — 09:45 to 12:45 (short shift / break rotation)'),
+    ('Evening',  '12:45:00', '21:45:00', 4, 'Evening shift — 12:45 to 21:45');
 
 
 -- ═══════════════════════════════════════════════════════════════════

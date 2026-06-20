@@ -19,19 +19,30 @@ SELECT
     COALESCE(AREA, 'UNKNOWN')                                 AS AREA,
     EVENT_TS,
     CONVERT_TIMEZONE('UTC', 'Asia/Bangkok', EVENT_TS)          AS EVENT_TS_LOCAL,
-    TRY_CAST(PARSE_JSON(PAYLOAD):state_code::VARCHAR AS NUMBER)       AS STATE_CODE,
-    TRY_CAST(PARSE_JSON(PAYLOAD):status_code::VARCHAR AS NUMBER)      AS STATUS_CODE,
-    TRY_CAST(PARSE_JSON(PAYLOAD):reason_code::VARCHAR AS NUMBER)      AS REASON_CODE,
+    -- Actual field names: n3_state_code, n3_status_code, n3_reason_code
+    TRY_CAST(PARSE_JSON(PAYLOAD):n3_state_code::VARCHAR AS NUMBER)    AS STATE_CODE,
+    TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER)   AS STATUS_CODE,
+    TRY_CAST(PARSE_JSON(PAYLOAD):n3_reason_code::VARCHAR AS NUMBER)   AS REASON_CODE,
     -- State 800 = producing per PLC standard
-    CASE WHEN TRY_CAST(PARSE_JSON(PAYLOAD):state_code::VARCHAR AS NUMBER) = 800
+    CASE WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_state_code::VARCHAR AS NUMBER) = 800
          THEN TRUE ELSE FALSE END                             AS IS_PRODUCING,
-    -- Downtime categorization by state code
+    -- Downtime categorization by state + status sub-code
+    -- 803 has sub-statuses: 803105=excluded/no-order, 803101=material shortage,
+    -- 803112=mechanical fault, 803102=quality hold, 803103=changeover,
+    -- 803104=scheduled maintenance, 803111=electrical fault
     CASE
-        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):state_code::VARCHAR AS NUMBER) = 800 THEN 'PRODUCING'
-        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):state_code::VARCHAR AS NUMBER) = 801 THEN 'IDLE'
-        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):state_code::VARCHAR AS NUMBER) = 803 THEN 'PLANNED_STOP'
-        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):state_code::VARCHAR AS NUMBER) IS NULL
-             AND TRY_CAST(PARSE_JSON(PAYLOAD):connected::VARCHAR AS BOOLEAN) = TRUE
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_state_code::VARCHAR AS NUMBER) = 800 THEN 'PRODUCING'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_state_code::VARCHAR AS NUMBER) = 801 THEN 'IDLE'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803105 THEN 'EXCLUDED_NO_ORDER'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803101 THEN 'MATERIAL_SHORTAGE'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803112 THEN 'MECHANICAL_FAULT'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803102 THEN 'QUALITY_HOLD'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803103 THEN 'CHANGEOVER'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803104 THEN 'SCHEDULED_MAINTENANCE'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_status_code::VARCHAR AS NUMBER) = 803111 THEN 'ELECTRICAL_FAULT'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_state_code::VARCHAR AS NUMBER) = 803 THEN 'PLANNED_STOP'
+        WHEN TRY_CAST(PARSE_JSON(PAYLOAD):n3_state_code::VARCHAR AS NUMBER) IS NULL
+             AND PARSE_JSON(PAYLOAD):connected::VARCHAR = 'true'
              THEN 'NO_DATA'
         ELSE 'UNPLANNED_STOP'
     END                                                        AS DOWNTIME_CATEGORY,
@@ -40,10 +51,11 @@ SELECT
     TRY_CAST(
         REGEXP_REPLACE(PARSE_JSON(PAYLOAD):source_period::VARCHAR, '[^0-9]', '')
     AS NUMBER)                                                 AS SOURCE_PERIOD_SEC,
-    TRY_CAST(PARSE_JSON(PAYLOAD):connected::VARCHAR AS BOOLEAN) AS CONNECTED,
+    CASE WHEN PARSE_JSON(PAYLOAD):connected::VARCHAR = 'true'
+         THEN TRUE ELSE FALSE END                              AS CONNECTED,
     EVENT_TS                                                   AS _SOURCE_TS
 FROM DE_CHALLENGE.BRONZE.RAW_EVENTS_STREAM
-WHERE SOURCE = 'production'
+WHERE SOURCE = 'redlion_cr3000'
   AND EVENT_TS IS NOT NULL;
 
 
@@ -95,8 +107,7 @@ SELECT
     END                                                        AS ISO_ZONE,
     EVENT_TS                                                   AS _SOURCE_TS
 FROM DE_CHALLENGE.BRONZE.RAW_EVENTS_STREAM
-WHERE SOURCE = 'vibration'
-  AND SCHEMA_VERSION IN ('v1', 'v2')
+WHERE SCHEMA_VERSION LIKE 'vibration.raw.%'
   AND EVENT_TS IS NOT NULL;
 
 
@@ -137,5 +148,5 @@ SELECT
     CASE WHEN ASSET ILIKE 'MAIN-MDB%' THEN TRUE ELSE FALSE END AS IS_DUPLICATE_METER,
     EVENT_TS                                                   AS _SOURCE_TS
 FROM DE_CHALLENGE.BRONZE.RAW_EVENTS_STREAM
-WHERE SOURCE = 'power_meter'
+WHERE SCHEMA_VERSION LIKE 'power_meter.raw.%'
   AND EVENT_TS IS NOT NULL;

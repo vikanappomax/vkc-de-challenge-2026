@@ -15,10 +15,10 @@ USING (
             p.*,
             EVENT_TS_LOCAL::DATE AS event_date,
             CASE
-                WHEN HOUR(EVENT_TS_LOCAL) * 60 + MINUTE(EVENT_TS_LOCAL) BETWEEN 45 AND 405       THEN 'Morning'   -- 00:45–06:45
-                WHEN HOUR(EVENT_TS_LOCAL) * 60 + MINUTE(EVENT_TS_LOCAL) BETWEEN 405 AND 885      THEN 'Day'       -- 06:45–14:45
-                WHEN HOUR(EVENT_TS_LOCAL) * 60 + MINUTE(EVENT_TS_LOCAL) BETWEEN 885 AND 1365     THEN 'Evening'   -- 14:45–22:45
-                ELSE 'Night'                                                                                       -- 22:45–00:45
+                WHEN HOUR(EVENT_TS_LOCAL) * 60 + MINUTE(EVENT_TS_LOCAL) BETWEEN 45 AND 585       THEN 'Morning'   -- 00:45–09:45
+                WHEN HOUR(EVENT_TS_LOCAL) * 60 + MINUTE(EVENT_TS_LOCAL) BETWEEN 585 AND 765      THEN 'Day'       -- 09:45–12:45
+                WHEN HOUR(EVENT_TS_LOCAL) * 60 + MINUTE(EVENT_TS_LOCAL) BETWEEN 765 AND 1305     THEN 'Evening'   -- 12:45–21:45
+                ELSE 'Night'                                                                                       -- 21:45–00:45
             END AS shift_name
         FROM DE_CHALLENGE.SILVER.PRODUCTION_EVENTS p
     ),
@@ -52,12 +52,12 @@ USING (
             SUM(s.SOURCE_PERIOD_SEC) AS total_observed_seconds,
             -- Downtime breakdown
             SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'IDLE' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS idle_seconds,
-            SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'NO_DATA' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS no_order_seconds,
-            SUM(CASE WHEN s.DOWNTIME_CATEGORY IN ('MATERIAL_SHORTAGE') THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS material_shortage_seconds,
-            SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'UNPLANNED_STOP' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS mechanical_fault_seconds,
-            SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'PLANNED_STOP' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS planned_stop_seconds,
-            0 AS changeover_seconds,
-            0 AS scheduled_maint_seconds,
+            SUM(CASE WHEN s.DOWNTIME_CATEGORY IN ('NO_DATA','EXCLUDED_NO_ORDER') THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS no_order_seconds,
+            SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'MATERIAL_SHORTAGE' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS material_shortage_seconds,
+            SUM(CASE WHEN s.DOWNTIME_CATEGORY IN ('MECHANICAL_FAULT','ELECTRICAL_FAULT','UNPLANNED_STOP') THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS mechanical_fault_seconds,
+            SUM(CASE WHEN s.DOWNTIME_CATEGORY IN ('PLANNED_STOP','SCHEDULED_MAINTENANCE','QUALITY_HOLD') THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS planned_stop_seconds,
+            SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'CHANGEOVER' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS changeover_seconds,
+            SUM(CASE WHEN s.DOWNTIME_CATEGORY = 'SCHEDULED_MAINTENANCE' THEN s.SOURCE_PERIOD_SEC ELSE 0 END) AS scheduled_maint_seconds,
             -- Primary downtime reason (mode)
             (SELECT DOWNTIME_CATEGORY FROM shift_assigned s2
              WHERE s2.event_date = s.event_date AND s2.WORK_CENTER = s.WORK_CENTER
