@@ -63,6 +63,7 @@ if st.button("🔄 Refresh Data"):
 # SECTION 1: Production
 # ═══════════════════════════════════════════════════════════════════
 st.header("⚙️ Production Uptime")
+st.info("Uptime excludes ALWAYS_RUNNING machines (100% state=800 but counter=0 delta) — these are stale PLC signals, not real production.", icon="ℹ️")
 
 latest_date = df_prod["EVENT_DATE"].max()
 df_latest_prod = df_prod[df_prod["EVENT_DATE"] == latest_date]
@@ -138,7 +139,16 @@ st.subheader("motor_02 — RMS Trend (ISO 10816-3)")
 df_m02 = df_vib[df_vib["MOTOR_ID"] == "motor_02"][["EVENT_DATE", "X_RMS_AVG"]].copy()
 df_m02 = df_m02.rename(columns={"X_RMS_AVG": "RMS (mm/s)"})
 st.line_chart(df_m02, x="EVENT_DATE", y="RMS (mm/s)")
-st.caption("Zone thresholds: A < 1.4 | B < 2.8 | C < 7.1 | D > 7.1 mm/s")
+st.caption("Zone thresholds (ISO 10816-3 Class II, rigid mount): A < 1.4 | B < 2.8 | C < 7.1 | D > 7.1 mm/s")
+with st.expander("Why these thresholds?"):
+    st.markdown("""
+    We use **ISO 10816-3 Class II rigid mount** thresholds (not flexible mount A<1.8, B<4.5, C<11.2, D>11.2).
+
+    **Reasons:**
+    - Plant motors are 22–55 kW, bolted to concrete pads (rigid foundation)
+    - Conservative thresholds give ~60% earlier warning vs flexible mount
+    - Aligns with predictive maintenance strategy: catch Zone C before catastrophic failure
+    """)
 
 # ═══════════════════════════════════════════════════════════════════
 # SECTION 3: Energy
